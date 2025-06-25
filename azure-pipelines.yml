@@ -1,47 +1,56 @@
 trigger:
   branches:
     include:
-      - main  # Runs pipeline when code is pushed to 'main' branch
+      - main  # Trigger pipeline on push to main branch
 
 variables:
-  deploy_cr: myacrregistry9390                    # Your Azure Container Registry name (without .azurecr.io)
-  deploy_version: $(Build.BuildId)                # Automatically generated version tag for each build
+  deploy_cr: myacrregistry9390                # Your Azure Container Registry name (without .azurecr.io)
+  deploy_version: $(Build.BuildId)            # Unique version tag for each build
 
 stages:
 - stage: Build
   displayName: Build & Push Docker Image
   jobs:
     - job: BuildAndPush
+      displayName: Build and Push Image
       pool:
-        vmImage: ubuntu-latest                   # Azure DevOps will use this Linux VM to run the job
+        vmImage: ubuntu-latest
       steps:
         - task: Docker@2
           displayName: Build and Push to ACR
           inputs:
-            command: buildAndPush                # Runs both 'docker build' and 'docker push'
-            repository: node-app                 # This becomes the image name in ACR (e.g., myacrregistry9390.azurecr.io/node-app)
-            dockerfile: Dockerfile               # Path to your Dockerfile
-            containerRegistry: my-acr-conn       # Azure DevOps service connection to your ACR
+            command: buildAndPush
+            repository: node-app                         # Image name
+            dockerfile: Dockerfile
+            containerRegistry: my-acr-conn               # Docker Registry service connection
             tags: |
-              $(deploy_version)                  # Version tag for the image, e.g., 25 if this is Build ID 25
+              $(deploy_version)
 
 - stage: Deploy
   displayName: Deploy to AKS
   dependsOn: Build
   jobs:
     - job: DeployToAKS
+      displayName: Deploy Application to Kubernetes
       pool:
         vmImage: ubuntu-latest
       steps:
-        - task: Kubernetes@1
-          displayName: Apply Kubernetes Manifests
+        - task: FileTransform@2
+          displayName: Replace image tag in manifest.yaml
           inputs:
-            connectionType: Azure Resource Manager          # Uses Azure service connection
-            azureSubscription: my-azure-conn                # Azure DevOps service connection to your subscription
-            azureResourceGroup: my-rg                       # Resource group where your AKS cluster is
-            kubernetesCluster: my-aks-cluster               # Name of your AKS cluster
-            namespace: default                              # Kubernetes namespace
+            folderPath: '$(System.DefaultWorkingDirectory)'
+            fileType: 'yaml'
+            targetFiles: '**/manifest.yaml'
+
+        - task: Kubernetes@1
+          displayName: Apply Kubernetes Manifest
+          inputs:
+            connectionType: Azure Resource Manager
+            azureSubscription: my-azure-conn             # Azure service connection name
+            azureResourceGroup: my-rg                    # Your resource group
+            kubernetesCluster: my-aks-cluster            # Your AKS cluster
+            namespace: my-app
             command: apply
             useConfigurationFile: true
             configuration: |
-              manifest.yaml                                 # Combined deployment + service YAML
+              manifest.yaml
